@@ -66,7 +66,11 @@ CREATE TABLE SYSTEM_EVENTS (
   event_id INT NOT NULL,
   event_type VARCHAR(50) NOT NULL,
   severity VARCHAR(20) NOT NULL,
+<<<<<<< HEAD
   description TEXT, -- Used TEXT for longer descriptions
+=======
+  description TEXT NOT NULL, -- Used TEXT for longer descriptions
+>>>>>>> 5305928e34ea119fa7d99cd13774d0677756d525
   pid INT NOT NULL,
   PRIMARY KEY (event_id),
   CONSTRAINT fk_process_event FOREIGN KEY (pid) REFERENCES PROCESSES(pid)
