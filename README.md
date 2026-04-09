@@ -31,12 +31,19 @@ The UI was characterized using the Antigravity AI Application. Below are the 4 p
 
 ### Screen Breakdown:
 * **Dashboard Overview:** High-level KPIs and health graphs.
+
     ![Dashboard Screen](images/dashboard_screen.png)
+
 * **Process Control Center:** Managing active system processes.
+
     ![Process Control Screen](images/process_control_screen.png)
+
 * **Hardware Monitor:** Infrastructure status and maintenance history.
+
     ![Hardware Monitor](images/hardware_monitor_screen.png)
+
 * **Security Audit:** Log viewer for system alerts and network sessions.
+
     ![Security Audit](images/security_audit_screen.png)
 
 ---
