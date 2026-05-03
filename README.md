@@ -128,7 +128,7 @@ FROM (
 ) AS FlattenedView
 GROUP BY username;
 ```
-![Q1aFV](images/Query1aFV.png)
+![Q1aFV](images/Query1bFV.png)
 *   **Efficiency Analysis:** Implementation B is often faster in standard query optimizers as it provides a more direct execution path for the engine. However, Implementation A (CTE) offers superior readability for complex schema maintenance.
 
 ### Query Pair 2: Critical Event Filtering
