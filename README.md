@@ -97,7 +97,7 @@ This section presents four pairs of queries. Each pair achieves the same result 
 ### Query Pair 1: User Workload Aggregation
 **Description:** Counts running processes and calculates the average size of associated executables per user.
 *   **Implementation A:** Uses a **Common Table Expression (CTE)** to deduplicate and isolate active processes before aggregation.
-'''sql
+```sql
 WITH CleanUserActivity AS (
     SELECT DISTINCT u.username, p.pid, e.file_size_kb
     FROM USERS u
@@ -111,10 +111,10 @@ SELECT
     AVG(file_size_kb) AS avg_exe_size
 FROM CleanUserActivity
 GROUP BY username;
-'''
+```
 ![Q1aCTE](images/Query1aCTE.png)
 *   **Implementation B:** Uses an **inline flattened subquery** to achieve the same dataset.
-'''sql
+```sql
 SELECT 
     username,
     COUNT(DISTINCT pid) AS running_processes,
@@ -127,14 +127,14 @@ FROM (
     WHERE p.status = 'Running'
 ) AS FlattenedView
 GROUP BY username;
-'''
+```
 ![Q1aFV](images/Query1aFV.png)
 *   **Efficiency Analysis:** Implementation B is often faster in standard query optimizers as it provides a more direct execution path for the engine. However, Implementation A (CTE) offers superior readability for complex schema maintenance.
 
 ### Query Pair 2: Critical Event Filtering
 **Description:** Identifies processes with multiple critical alerts that also have actively recorded usage logs.
 *   **Implementation A:** Uses an **EXISTS** clause.
-'''sql
+```sql
 SELECT 
     p.process_name, 
     u.username, 
@@ -146,10 +146,10 @@ WHERE s.severity = 'Critical'
   AND EXISTS (SELECT 1 FROM USAGE_LOGS l WHERE l.pid = p.pid)
 GROUP BY p.process_name, u.username
 HAVING COUNT(s.event_id) > 2;
-'''
+```
 ![Q2aEXISTS](images/Query2aEXISTS.png)
 *   **Implementation B:** Uses an **IN** clause with a nested subquery.
-'''sql
+```sql
 SELECT 
     p.process_name, 
     u.username, 
@@ -161,14 +161,14 @@ WHERE s.severity = 'Critical'
   AND p.pid IN (SELECT pid FROM USAGE_LOGS)
 GROUP BY p.process_name, u.username
 HAVING COUNT(s.event_id) > 2;
-'''
+```
 ![Q2bIN](images/Query2bIN.png)
 *   **Efficiency Analysis:** Implementation A (EXISTS) is significantly more efficient because it acts as a **semi-join**, meaning the database engine stops searching as soon as it finds the first match. Implementation B forces the engine to process and hold the entire list of IDs in memory before evaluation.
 
 ### Query Pair 3: Maintenance Efficiency Benchmarking
 **Description:** Flags resources whose total repair costs exceed the overall average for their respective hardware categories.
 *   **Implementation A:** Utilizes modern **Window Functions** to calculate category averages in a single pass.
-'''sql
+```sql
 SELECT 
     resource_name, 
     total_repair_cost, 
@@ -184,10 +184,10 @@ FROM (
     GROUP BY r.resource_id, r.resource_name, r.type_id, m.repair_cost
 ) AS AggregatedStats
 WHERE total_repair_cost > category_avg;
-'''
+```
 ![Q3aWINDOW](images/Query3aWINDOW.png)
 *   **Implementation B:** Relies on a **correlated subquery** within the SELECT statement.
-'''sql
+```sql
 SELECT 
     r.resource_name, 
     SUM(m.repair_cost) AS total_repair_cost,
@@ -204,14 +204,14 @@ HAVING SUM(m.repair_cost) > (
     JOIN RESOURCES r3 ON m3.resource_id = r3.resource_id 
     WHERE r3.type_id = r.type_id
 );
-'''
+```
 ![Q3bSUB](images/Query3bSUB.png)
 *   **Efficiency Analysis:** Implementation A is vastly more efficient. Implementation B forces the database to redundantly recalculate the category average for every single row, creating a performance bottleneck.
 
 ### Query Pair 4: Temporal Security Patterns
 **Description:** Analyzes temporal patterns by grouping critical system events by year and month to identify seasonal trends.
 *   **Implementation A:** This implementation uses standard SQL functional commands to extract date components and aggregates them efficiently using a grouped result set.
-'''sql
+```sql
 SELECT 
     EXTRACT(YEAR FROM p.start_time) AS event_year,
     EXTRACT(MONTH FROM p.start_time) AS event_month,
@@ -221,10 +221,10 @@ JOIN PROCESSES p ON s.pid = p.pid
 WHERE s.severity = 'Critical'
 GROUP BY event_year, event_month
 ORDER BY event_year DESC, event_month DESC;
-'''
+```
 ![Q4a](images/Query4a.png)
 *   **Implementation B:** This implementation achieves the same result but relies on a correlated subquery within the SELECT list to count events for every row, requiring a DISTINCT clause to clean up the redundant output.
-'''sql
+```sql
 SELECT DISTINCT
     EXTRACT(YEAR FROM p.start_time) AS yr,
     EXTRACT(MONTH FROM p.start_time) AS mo,
@@ -238,7 +238,7 @@ FROM SYSTEM_EVENTS s
 JOIN PROCESSES p ON s.pid = p.pid
 WHERE s.severity = 'Critical'
 ORDER BY yr DESC, mo DESC;
-'''
+```
 ![Q4b](images/Query4b.png)
 *   **Efficiency Analysis:** Implementation A uses native, hardware-optimized temporal instructions. Implementation B introduces latency by forcing the engine to perform expensive data-type conversions on every row.
 
@@ -249,7 +249,7 @@ These queries provide specialized, non-trivial views for the Dashboard and Secur
 
 ### Query 5: Unified Audit Log
 **Description:** Generates a unified audit log by combining system events and network sessions into one chronological view. It uses **UNION ALL** to standardize different data types and format traffic data for the security dashboard.
-'''sql
+```sql
 SELECT * FROM (
     SELECT 
         'System Event' AS category,
@@ -275,12 +275,12 @@ SELECT * FROM (
 ) AS UnifiedLog
 ORDER BY activity_time DESC
 LIMIT 50;
-'''
+```
 ![Q5](images/Query5AUDIT.png)
 
 ### Query 6: Resource Intensity Baseline
 **Description:** Identifies processes consuming significantly more CPU than the historical average for their hardware category. This is achieved using deep joins and nested subqueries to calculate on-the-fly benchmarks.
-'''sql
+```sql
 SELECT 
     p.process_name,
     rt.type_name,
@@ -305,12 +305,12 @@ HAVING AVG(u.cpu_percent) > (
     JOIN RESOURCES r2 ON a2.resource_id = r2.resource_id
     WHERE r2.type_id = rt.type_id
 );
-'''
+```
 ![Q6](images/Query6BASELINE.png)
 
 ### Query 7: Critical Failure Audit Trail
 **Description:** Provides a direct audit trail mapping severity alerts to specific processes and start times, ordered chronologically for security review.
-'''sql
+```sql
 SELECT 
     s.event_type,
     p.process_name,
@@ -320,12 +320,12 @@ FROM SYSTEM_EVENTS s
 JOIN PROCESSES p ON s.pid = p.pid
 WHERE s.severity = 'Critical'
 ORDER BY p.start_time DESC;
-'''
+```
 ![Q7](images/Query7CRITICAL.png)
 
 ### Query 8: Maintenance & Financial Overview
 **Description:** Links physical hardware status to financial repair data, displaying technician names and costs for infrastructure that is currently operational.
-'''sql
+```sql
 SELECT 
     r.resource_name,
     rt.type_name,
@@ -336,7 +336,7 @@ JOIN MAINTENANCE_LOG m ON r.resource_id = m.resource_id
 JOIN RESOURCE_TYPES rt ON r.type_id = rt.type_id
 WHERE r.is_operational = TRUE
 ORDER BY m.repair_cost DESC;
-'''
+```
 ![Q8](images/Query8FINANCE.png)
 
 ---
@@ -345,7 +345,7 @@ ORDER BY m.repair_cost DESC;
 
 ### Update 1: Technician Rate Adjustments
 **Description**: Increases repair costs by 15% for specific maintenance records associated with 'System_RAM' performed in 2026.
-'''sql
+```sql
 UPDATE MAINTENANCE_LOG
 SET repair_cost = repair_cost * 1.15
 WHERE technician_name = 'Lars Nielsen'
@@ -356,14 +356,14 @@ WHERE technician_name = 'Lars Nielsen'
       JOIN RESOURCE_TYPES rt ON r.type_id = rt.type_id
       WHERE rt.type_name = 'Accelerator_Type_001'
   );
-'''
+```
 ![UD1B](images/Update1Before.png)
 ![UD1D](images/Update1During.png)
 ![UD1A](images/Update1After.png)
 
 ### Update 2: Logical Process Termination
 **Description:** Updates process status to 'Stopped' based on parent-child hierarchy logic:
-'''sql
+```sql
 UPDATE PROCESSES
 SET status = 'Stopped'
 WHERE parent_pid IS NOT NULL 
@@ -372,14 +372,14 @@ WHERE parent_pid IS NOT NULL
       FROM PROCESSES 
       WHERE status = 'Stopped'
   );
-'''
+```
 ![UD2B](images/Update2Before.png)
 ![UD2D](images/Update2During.png)
 ![UD2A](images/Update2After.png)
 
 ### Update 3: Security Severity Escalation
 **Description**: Dynamically upgrades system events to 'Critical' if the linked process has sent more than 1GB of data in a single network session.
-'''sql
+```sql
 UPDATE SYSTEM_EVENTS
 SET severity = 'Critical'
 WHERE pid IN (
@@ -387,14 +387,14 @@ WHERE pid IN (
     FROM NETWORK_SESSIONS 
     WHERE bytes_sent > 1073741824 -- 1GB in bytes
 );
-'''
+```
 ![UD3B](images/Update3Before.png)
 ![UD3D](images/Update3During.png)
 ![UD3A](images/Update3After.png)
 
 ### Delete 1: Log Rotation
 **Description:** Deletes stale `USAGE_LOGS` older than 30 days to optimize system storage:
-'''sql
+```sql
 DELETE FROM USAGE_LOGS
 WHERE snapshot_time < CURRENT_DATE - INTERVAL '30 days'
   AND pid IN (
@@ -402,14 +402,14 @@ WHERE snapshot_time < CURRENT_DATE - INTERVAL '30 days'
       FROM PROCESSES 
       WHERE status = 'Terminated' OR status = 'Completed'
   );
-'''
+```
 ![D1B](images/Delete1Before.png)
 ![D1D](images/Delete1During.png)
 ![D1A](images/Delete1After.png)
 
 ### Delete 2: Removing Low-Impact Security Noise (Security Audit)
 **Description**: Removes 'Info' level events for users who have 'Developer' account types to reduce "noise" in the Unified Audit Log.
-'''sql
+```sql
 DELETE FROM SYSTEM_EVENTS
 WHERE severity = 'Info'
   AND pid IN (
@@ -418,21 +418,21 @@ WHERE severity = 'Info'
       JOIN USERS u ON p.user_id = u.user_id
       WHERE u.account_type = 'Developer'
   );
-'''
+```
 ![D2B](images/Delete2Before.png)
 ![D2D](images/Delete2During.png)
 ![D2A](images/Delete2After.png)
 
 ### Delete 3: Clearing Inactive Resource Allocations (Hardware Monitor)
 **Description**: Removes records from the bridge table ALLOCATIONS where the associated resource is no longer operational.
-'''sql
+```sql
 DELETE FROM ALLOCATIONS
 WHERE resource_id IN (
     SELECT resource_id 
     FROM RESOURCES 
     WHERE is_operational = FALSE
 );
-'''
+```
 ![D3B](images/Delete3Before.png)
 ![D3D](images/Delete3During.png)
 ![D3A](images/Delete3After.png)
@@ -441,22 +441,22 @@ WHERE resource_id IN (
 ## 4. Integrity Constraints (ALTER TABLE)
 Three constraints were added using `ALTER TABLE` to ensure "Professional-Grade" data integrity:
 1.  **CPU Range Check:** Ensures `cpu_percent` is between 0 and 100.
-'''sql
+```sql
 ALTER TABLE USAGE_LOGS 
 ADD CONSTRAINT check_cpu_range CHECK (cpu_percent >= 0 AND cpu_percent <= 100);
-'''
+```
 ![Constraint1](images/Constraint1.png)
 2.  **Unique Repair Constraint:** Prevents duplicate logs for the same resource, date, and technician.
-'''sql
+```sql
 ALTER TABLE MAINTENANCE_LOG 
 ADD CONSTRAINT unique_repair UNIQUE (repair_date, resource_id, technician_name);
-'''
+```
 ![Constraint2](images/Constraint2.png)
 3.  **Logical Date Check:** Ensures `start_time` is never in the future.
-'''sql
+```sql
 ALTER TABLE PROCESSES 
 ADD CONSTRAINT check_start_time CHECK (start_time <= CURRENT_TIMESTAMP);
-'''
+```
 ![Constraint3](images/Constraint3.png)
 
 ---
