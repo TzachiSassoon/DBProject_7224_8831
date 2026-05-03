@@ -394,38 +394,94 @@ WHERE pid IN (
 
 ### Delete 1: Log Rotation
 **Description:** Deletes stale `USAGE_LOGS` older than 30 days to optimize system storage:
--- [Placeholder: Delete 1 - BEFORE/AFTER Table State]
+'''sql
+DELETE FROM USAGE_LOGS
+WHERE snapshot_time < CURRENT_DATE - INTERVAL '30 days'
+  AND pid IN (
+      SELECT pid 
+      FROM PROCESSES 
+      WHERE status = 'Terminated' OR status = 'Completed'
+  );
+'''
+![D1B](images/Delete1Before.png)
+![D1D](images/Delete1During.png)
+![D1A](images/Delete1After.png)
 
 ### Delete 2: Removing Low-Impact Security Noise (Security Audit)
 **Description**: Removes 'Info' level events for users who have 'Developer' account types to reduce "noise" in the Unified Audit Log.
+'''sql
+DELETE FROM SYSTEM_EVENTS
+WHERE severity = 'Info'
+  AND pid IN (
+      SELECT p.pid 
+      FROM PROCESSES p
+      JOIN USERS u ON p.user_id = u.user_id
+      WHERE u.account_type = 'Developer'
+  );
+'''
+![D2B](images/Delete2Before.png)
+![D2D](images/Delete2During.png)
+![D2A](images/Delete2After.png)
 
 ### Delete 3: Clearing Inactive Resource Allocations (Hardware Monitor)
 **Description**: Removes records from the bridge table ALLOCATIONS where the associated resource is no longer operational.
+'''sql
+DELETE FROM ALLOCATIONS
+WHERE resource_id IN (
+    SELECT resource_id 
+    FROM RESOURCES 
+    WHERE is_operational = FALSE
+);
+'''
+![D3B](images/Delete3Before.png)
+![D3D](images/Delete3During.png)
+![D3A](images/Delete3After.png)
 ---
 
 ## 4. Integrity Constraints (ALTER TABLE)
 Three constraints were added using `ALTER TABLE` to ensure "Professional-Grade" data integrity:
 1.  **CPU Range Check:** Ensures `cpu_percent` is between 0 and 100.
+'''sql
+ALTER TABLE USAGE_LOGS 
+ADD CONSTRAINT check_cpu_range CHECK (cpu_percent >= 0 AND cpu_percent <= 100);
+'''
+![Constraint1](images/Constraint1.png)
 2.  **Unique Repair Constraint:** Prevents duplicate logs for the same resource, date, and technician.
+'''sql
+ALTER TABLE MAINTENANCE_LOG 
+ADD CONSTRAINT unique_repair UNIQUE (repair_date, resource_id, technician_name);
+'''
+![Constraint2](images/Constraint2.png)
 3.  **Logical Date Check:** Ensures `start_time` is never in the future.
-
--- [Placeholder: Screenshot of FAILED insert due to Constraint Violation]
+'''sql
+ALTER TABLE PROCESSES 
+ADD CONSTRAINT check_start_time CHECK (start_time <= CURRENT_TIMESTAMP);
+'''
+![Constraint3](images/Constraint3.png)
 
 ---
 
 ## 5. Transactions (Commit & Rollback)
 Demonstrating **ACID** compliance within the Supabase SQL environment:
 *   **Rollback:** Executing an accidental mass-update and undoing it to restore original data.
+![RBBefore](images/RollbackBefore.png)
+![RBDuring](images/RollbackDuring.png)
+![RBAfter](images/RollbackAfter.png)
 *   **Commit:** Permanently saving a verified administrative change.
-
--- [Placeholder: Transaction Step-by-Step Screenshots]
+![CommitBefore](images/CommitBefore.png)
+![CommitAfter](images/CommitAfter.png)
 
 ---
 
 ## 6. Performance Optimization (Indexes)
-**Indexes Added:** `idx_usage_time`, `idx_proc_status`, and `idx_net_ip`.
+**Indexes Added:** `idx_usage_time`, `idx_cpu_status`, and `idx_net_ip`.
 
 **Performance Justification:**
 Using `EXPLAIN ANALYZE`, we observed a shift from **Sequential Scans** to **Index Scans**. This reduced query complexity from $O(n)$ to $O(\log n)$, which is essential for managing our 40,000+ monitoring records.
 
--- [Placeholder: Explain Analyze BEFORE/AFTER Index]
+![IDX1Before](images/Index1Before.png)
+![IDX1After](images/Index1After.png)
+![IDX2Before](images/Index2Before.png)
+![IDX2After](images/Index2After.png)
+![IDX3Before](images/Index3Before.png)
+![IDX3After](images/Index3After.png)
