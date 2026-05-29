@@ -18,6 +18,10 @@
 4. [Integrity Constraints (ALTER TABLE)](#4-integrity-constraints-alter-table)
 5. [Transactions (Commit & Rollback)](#5-transactions-commit--rollback)
 6. [Performance Optimization (Indexes)](#6-performance-optimization-indexes)
+### SysManager - Phase C: Database Integration & Views
+1. [Integration Strategy & Architecture](#1-integration-strategy--architecture)
+2. [Integration Implementation (FDW)](#2-integration-implementation-fdw)
+3. [System Views & Business Logic Queries](#3-system-views--business-logic-queries)
 
 ---
 
@@ -485,3 +489,124 @@ Using `EXPLAIN ANALYZE`, we observed a shift from **Sequential Scans** to **Inde
 ![IDX2After](images/Index2After.png)
 ![IDX3Before](images/Index3Before.png)
 ![IDX3After](images/Index3After.png)
+
+---
+
+# SysManager - Phase C: Database Integration & Views
+
+## 1. Integration Strategy & Architecture
+For Phase C, SysManager was integrated with **GymOps** (a facility and business management system). 
+
+To achieve a unified database without risking destructive data migrations or altering existing physical schemas, we selected **Option B: Foreign Tables**. By utilizing PostgreSQL's Foreign Data Wrapper (`postgres_fdw`), we established a virtual bridge between the systems. Specifically, we mapped `SysManager.USERS` to `GymOps.EMPLOYEE` using a 1:1 relationship, allowing us to natively track which physical staff members are utilizing the IT infrastructure.
+
+### GymOps (Original Wing) Architecture
+**GymOps ERD:**
+![GymOps ERD](images/GymOpsERD.png)
+
+**GymOps DSD:**
+![GymOps DSD](images/GymOpsDSD.png)
+
+### Integrated System Architecture
+**Integrated ERD (Featuring Has_Account Bridge):**
+![Integrated ERD](images/IntegratedERD.png)
+
+**Integrated DSD (Featuring Foreign Key Injection):**
+![Integrated DSD](images/IntegratedDSD.png)
+
+---
+
+## 2. Integration Implementation (FDW)
+The integration was executed directly in the Supabase SQL environment. We enabled the FDW extension, mapped the remote server credentials, and selectively imported the `employee` table into our public schema.
+
+```sql
+-- 1. Enable the Foreign Data Wrapper extension
+CREATE EXTENSION IF NOT EXISTS postgres_fdw;
+
+-- 2. Define the remote GymOps server 
+CREATE SERVER gymops_server
+FOREIGN DATA WRAPPER postgres_fdw
+OPTIONS (host 'aws-0-eu-west-1.pooler.supabase.com', port '5432', dbname 'postgres');
+
+-- 3. Set up the authentication bridge
+CREATE USER MAPPING FOR current_user
+SERVER gymops_server
+OPTIONS (user 'postgres.dtmlqdvdqvxopncnifmr', password '********');
+
+-- 4. Import the target table securely
+IMPORT FOREIGN SCHEMA public LIMIT TO (employee)
+FROM SERVER gymops_server
+INTO public;
+```
+
+## 3. System Views & Business Logic Queries
+To demonstrate the functional capability of the integration, we created two cross-system views (one from the perspective of each wing) and executed meaningful queries against them.
+
+### View 1: SysManager IT Process Audit
+Description: This view allows SysManager to track IT process execution back to the physical GymOps employees running them, satisfying the cross-wing integration requirement.
+
+```sql
+CREATE VIEW sysmanager_process_audit_view AS
+SELECT 
+    p.pid,
+    p.process_name,
+    u.username,
+    e.first_name,
+    e.last_name,
+    e.job_title
+FROM PROCESSES p
+JOIN USERS u ON p.user_id = u.user_id
+JOIN employee e ON u.user_id = e.employee_id;
+
+SELECT * FROM sysmanager_process_audit_view LIMIT 10;
+```
+
+### Query 1.1: Management Process Filter
+Description: Filters the integrated view to exclusively show active IT processes that were initiated by Gym Managers.
+
+```sql
+SELECT * FROM sysmanager_process_audit_view 
+WHERE job_title = 'Gym Manager';
+```
+
+### Query 1.2: Active Process Aggregation
+Description: Aggregates the integrated data to count the total number of active IT processes currently attributed to each individual employee.
+
+```sql
+SELECT first_name, last_name, COUNT(pid) as active_processes
+FROM sysmanager_process_audit_view
+GROUP BY first_name, last_name;
+```
+
+### View 2: GymOps HR IT Access Review
+Description: This view allows GymOps HR to audit the level of IT access (account_type) their physical staff currently holds within the SysManager infrastructure.
+
+```sql
+CREATE VIEW gymops_staff_access_view AS
+SELECT 
+    e.employee_id,
+    e.first_name,
+    e.last_name,
+    u.account_type,
+    u.creation_date
+FROM employee e
+JOIN USERS u ON e.employee_id = u.user_id;
+
+SELECT * FROM gymops_staff_access_view LIMIT 10;
+```
+
+### Query 2.1: High-Risk Access Identification
+Description: Filters the HR access view to identify employees who currently hold high-risk 'Admin' privileges in the IT system.
+
+```sql
+SELECT * FROM gymops_staff_access_view 
+WHERE account_type = 'Admin';
+```
+
+### Query 2.2: Account Aging Sort
+Description: Sorts the employee IT access records to show the most recently created system accounts at the top.
+
+```sql
+SELECT first_name, last_name, account_type, creation_date 
+FROM gymops_staff_access_view 
+ORDER BY creation_date DESC;
+```
