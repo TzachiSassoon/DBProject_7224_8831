@@ -23,11 +23,12 @@
 2. [Integration Implementation (FDW)](#2-integration-implementation-fdw)
 3. [System Views & Business Logic Queries](#3-system-views--business-logic-queries)
 ### SysManager - Phase D: Database Programming (PL/pgSQL)
-1. [Table Structure Modifications (Alter Table)](#1-table-structure-modifications-alter-table)
-2. [Security & Risk Analysis Mechanism (Routine 1)](#2-security--risk-analysis-mechanism-routine-1)
-3. [Hardware Efficiency Calculation Mechanism (Routine 2)](#3-hardware-efficiency-calculation-mechanism-routine-2)
-4. [Automated Resource Downtime Trigger (Trigger 1)](#4-automated-resource-downtime-trigger-trigger-1)
-5. [Budget & Maintenance Control Trigger (Trigger 2)](#5-budget--maintenance-control-trigger-trigger-2)
+1. [Table Structure Modifications & Diagram Updates (Alter Table)](#1-table-structure-modifications--diagram-updates-alter-table)
+2. [Table Structure Modifications (Alter Table)](#1-table-structure-modifications-alter-table)
+3. [Security & Risk Analysis Mechanism (Routine 1)](#2-security--risk-analysis-mechanism-routine-1)
+4. [Hardware Efficiency Calculation Mechanism (Routine 2)](#3-hardware-efficiency-calculation-mechanism-routine-2)
+5. [Automated Resource Downtime Trigger (Trigger 1)](#4-automated-resource-downtime-trigger-trigger-1)
+6. [Budget & Maintenance Control Trigger (Trigger 2)](#5-budget--maintenance-control-trigger-trigger-2)
 
 ---
 
@@ -623,7 +624,20 @@ ORDER BY creation_date DESC;
 
 In this phase, we implemented complex business logic directly within the database using PL/pgSQL. The programs written are non-trivial and include extensive use of Implicit & Explicit Cursors, returning a Ref Cursor, Exception Handling, complex records (%ROWTYPE and RECORD), branching, and loops.
 
-## 1. Table Structure Modifications (Alter Table)
+## 1. Table Structure Modifications & Diagram Updates (Alter Table)
+To allow the PL/pgSQL programs to perform advanced, valuable data updates, we modified the core database schema by adding two dedicated columns to the base tables:
+* **`risk_level` (VARCHAR):** Added to the `PROCESSES` table to classify and track problematic processes based on security audits.
+* **`efficiency_score` (NUMERIC):** Added to the `RESOURCES` table to rate hardware efficiency based on maintenance costs and capacity.
+
+**Documentation Sync:** Following these database alterations, the project's Entity-Relationship Diagram (ERD) and Data Structure Diagram (DSD) were fully updated to reflect the new `risk_level` and `efficiency_score` attributes, maintaining strict consistency between the design documents and the live database.
+
+The changes were saved in the `AlterTable.sql` file and executed successfully in the database:
+
+![Table Modifications](images/AlterTableP4.png)
+
+---
+
+## 2. Table Structure Modifications (Alter Table)
 To allow the programs to perform advanced, valuable data updates, we added two dedicated columns to the base tables:
 * `risk_level` column to the `PROCESSES` table - for classifying problematic processes.
 * `efficiency_score` column to the `RESOURCES` table - for rating hardware efficiency.
@@ -634,7 +648,7 @@ The changes were saved in the `AlterTable.sql` file and executed successfully:
 
 ---
 
-## 2. Security & Risk Analysis Mechanism (Routine 1)
+## 3. Security & Risk Analysis Mechanism (Routine 1)
 This mechanism scans all processes that generated abnormal system events, analyzes the account type of the user who initiated them, and automatically updates the process's risk level while logging an audited security event.
 
 ### A. Function: `get_risky_processes` (File: `func_get_risky_processes.sql`)
@@ -722,7 +736,7 @@ The `PROCESSES` table was successfully updated, and risk levels were calculated 
 
 ---
 
-## 3. Hardware Efficiency Calculation Mechanism (Routine 2)
+## 4. Hardware Efficiency Calculation Mechanism (Routine 2)
 This mechanism conducts a financial and operational analysis of all active server resources in the system, calculating an efficiency score based on capacity versus maintenance costs.
 
 ### A. Function: `calc_efficiency` (File: `func_calculate_efficiency.sql`)
@@ -802,7 +816,7 @@ The `efficiency_score` column in the `RESOURCES` table was successfully calculat
 
 ---
 
-## 4. Automated Resource Downtime Trigger (Trigger 1)
+## 5. Automated Resource Downtime Trigger (Trigger 1)
 **File:** `trig_resource_offline.sql`  
 **Trigger Type:** `AFTER UPDATE`  
 **Description:** This trigger listens to the `RESOURCES` table. As soon as a server's status changes from `TRUE` to `FALSE` (indicating a crash or downtime), the trigger fires automatically. It calculates a new event key, fetches a valid process ID to avoid violating NOT NULL constraints, and injects a critical 'Hardware Alert' into the system event log.
@@ -833,6 +847,7 @@ EXECUTE FUNCTION log_resource_downtime();
 
 ### Trigger Execution Proof:
 Executing an UPDATE command simulating a server crash:
+
 ![Server Crash Simulation](images/Trigger1Trigger.png)
 
 The trigger automatically generated a critical log entry in the `SYSTEM_EVENTS` table:
@@ -840,7 +855,7 @@ The trigger automatically generated a critical log entry in the `SYSTEM_EVENTS` 
 
 ---
 
-## 5. Budget & Maintenance Control Trigger (Trigger 2)
+## 6. Budget & Maintenance Control Trigger (Trigger 2)
 **File:** `trig_check_repair_cost.sql`  
 **Trigger Type:** `BEFORE INSERT OR UPDATE`  
 **Description:** A security trigger that prevents budget overruns in maintenance records. If a technician attempts to enter a repair cost exceeding $10,000, the trigger intercepts the action, rolls back the query, and throws a custom Exception to protect the database.
