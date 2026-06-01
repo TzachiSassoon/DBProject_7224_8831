@@ -22,6 +22,12 @@
 1. [Integration Strategy & Architecture](#1-integration-strategy--architecture)
 2. [Integration Implementation (FDW)](#2-integration-implementation-fdw)
 3. [System Views & Business Logic Queries](#3-system-views--business-logic-queries)
+### SysManager - Phase D: Database Programming (PL/pgSQL)
+1. [Table Structure Modifications (Alter Table)](#1-table-structure-modifications-alter-table)
+2. [Security & Risk Analysis Mechanism (Routine 1)](#2-security--risk-analysis-mechanism-routine-1)
+3. [Hardware Efficiency Calculation Mechanism (Routine 2)](#3-hardware-efficiency-calculation-mechanism-routine-2)
+4. [Automated Resource Downtime Trigger (Trigger 1)](#4-automated-resource-downtime-trigger-trigger-1)
+5. [Budget & Maintenance Control Trigger (Trigger 2)](#5-budget--maintenance-control-trigger-trigger-2)
 
 ---
 
@@ -610,3 +616,252 @@ SELECT first_name, last_name, account_type, creation_date
 FROM gymops_staff_access_view 
 ORDER BY creation_date DESC;
 ```
+
+---
+
+# SysManager - Phase D: Database Programming (PL/pgSQL)
+
+In this phase, we implemented complex business logic directly within the database using PL/pgSQL. The programs written are non-trivial and include extensive use of Implicit & Explicit Cursors, returning a Ref Cursor, Exception Handling, complex records (%ROWTYPE and RECORD), branching, and loops.
+
+## 1. Table Structure Modifications (Alter Table)
+To allow the programs to perform advanced, valuable data updates, we added two dedicated columns to the base tables:
+* `risk_level` column to the `PROCESSES` table - for classifying problematic processes.
+* `efficiency_score` column to the `RESOURCES` table - for rating hardware efficiency.
+
+The changes were saved in the `AlterTable.sql` file and executed successfully:
+
+![Table Modifications](AlterTableP4.png)
+
+---
+
+## 2. Security & Risk Analysis Mechanism (Routine 1)
+This mechanism scans all processes that generated abnormal system events, analyzes the account type of the user who initiated them, and automatically updates the process's risk level while logging an audited security event.
+
+### A. Function: `get_risky_processes` (File: `func_get_risky_processes.sql`)
+**Description:** The function accepts an event threshold and returns a **Ref Cursor** containing all processes that exceeded this threshold, joined with their user data.
+
+```sql
+CREATE OR REPLACE FUNCTION get_risky_processes(p_threshold INT)
+RETURNS refcursor AS $$
+DECLARE
+    risky_cursor refcursor;
+BEGIN
+    OPEN risky_cursor FOR
+        SELECT p.pid, p.process_name, u.account_type, COUNT(e.event_id) as event_count
+        FROM PROCESSES p
+        JOIN USERS u ON p.user_id = u.user_id
+        JOIN SYSTEM_EVENTS e ON p.pid = e.pid
+        GROUP BY p.pid, p.process_name, u.account_type
+        HAVING COUNT(e.event_id) >= p_threshold;
+
+    RETURN risky_cursor;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'Error generating ref cursor: %', SQLERRM;
+        RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### B. Procedure: `handle_risky_process` (File: `proc_handle_risky_processes.sql`)
+**Description:** The procedure receives a process ID and an account type. It uses an Implicit Cursor to fetch the process name, utilizes Branching based on security rules, and executes **DML** commands (updating the risk level and inserting a new system event with an auto-calculated running key).
+
+```sql
+CREATE OR REPLACE PROCEDURE handle_risky_process(p_pid INT, p_account_type VARCHAR)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_process_name VARCHAR;
+    v_next_event_id INT;
+BEGIN
+    SELECT process_name INTO v_process_name FROM PROCESSES WHERE pid = p_pid;
+
+    IF LOWER(p_account_type) = 'administrator' THEN
+        UPDATE PROCESSES SET risk_level = 'High - Admin Review Needed' WHERE pid = p_pid;
+    ELSIF LOWER(p_account_type) = 'user' THEN
+        UPDATE PROCESSES SET risk_level = 'Medium', status = 'Suspended' WHERE pid = p_pid;
+    ELSE
+        UPDATE PROCESSES SET risk_level = 'Low' WHERE pid = p_pid;
+    END IF;
+
+    SELECT COALESCE(MAX(event_id), 0) + 1 INTO v_next_event_id FROM SYSTEM_EVENTS;
+
+    INSERT INTO SYSTEM_EVENTS (event_id, event_type, severity, description, pid)
+    VALUES (v_next_event_id, 'Audit Action', 'Warning', 'Risk level updated for ' || v_process_name, p_pid);
+END;
+$$;
+```
+
+### C. Main Program 1 (File: `main_audit_routine.sql`)
+**Description:** An anonymous block that calls the function to get the Ref Cursor, loops through the data into a dynamic **RECORD** type, and calls the procedure for each flagged process.
+
+```sql
+DO $$
+DECLARE
+    v_refcursor refcursor;
+    v_record RECORD;
+BEGIN
+    v_refcursor := get_risky_processes(1);
+
+    LOOP
+        FETCH v_refcursor INTO v_record;
+        EXIT WHEN NOT FOUND;
+        CALL handle_risky_process(v_record.pid, v_record.account_type);
+    END LOOP;
+
+    CLOSE v_refcursor;
+END;
+$$;
+```
+
+### D. Execution Proof & Database Update
+The main program executed without errors (Database success message):
+![Main 1 Execution](images/Main1Run.png)
+
+The `PROCESSES` table was successfully updated, and risk levels were calculated and populated:
+![Updated Table Rows](images/Main1Rows.png)
+
+---
+
+## 3. Hardware Efficiency Calculation Mechanism (Routine 2)
+This mechanism conducts a financial and operational analysis of all active server resources in the system, calculating an efficiency score based on capacity versus maintenance costs.
+
+### A. Function: `calc_efficiency` (File: `func_calculate_efficiency.sql`)
+**Description:** Calculates the efficiency score and includes division-by-zero **Exception handling**, rounds the data to 2 decimal places, and caps the maximum score at 100.00 to maintain operational accuracy.
+
+```sql
+CREATE OR REPLACE FUNCTION calc_efficiency(p_resource_id INT)
+RETURNS NUMERIC AS $$
+DECLARE
+    v_total_cost NUMERIC;
+    v_capacity INT;
+    v_score NUMERIC;
+BEGIN
+    SELECT SUM(repair_cost) INTO v_total_cost FROM MAINTENANCE_LOG WHERE resource_id = p_resource_id;
+    SELECT capacity INTO v_capacity FROM RESOURCES WHERE resource_id = p_resource_id;
+
+    IF v_total_cost IS NULL OR v_total_cost = 0 THEN
+        v_score := 100.00;
+    ELSE
+        v_score := (v_capacity / v_total_cost) * 100;
+    END IF;
+
+    IF v_score > 100.00 THEN
+        v_score := 100.00;
+    END IF;
+
+    RETURN ROUND(v_score, 2);
+EXCEPTION
+    WHEN division_by_zero THEN
+        RETURN 0;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### B. Procedure: `update_efficiencies` (File: `proc_update_efficiencies.sql`)
+**Description:** Utilizes an **Explicit Cursor** to fetch all active resources, iterates through them, and populates the data into a structured **RESOURCES%ROWTYPE** record. The function is called for each row, and the data is updated via DML.
+
+```sql
+CREATE OR REPLACE PROCEDURE update_efficiencies()
+LANGUAGE plpgsql AS $$
+DECLARE
+    c_resources CURSOR FOR SELECT * FROM RESOURCES WHERE is_operational = TRUE;
+    v_res RESOURCES%ROWTYPE;
+    v_score NUMERIC;
+BEGIN
+    OPEN c_resources;
+    LOOP
+        FETCH c_resources INTO v_res;
+        EXIT WHEN NOT FOUND;
+
+        v_score := calc_efficiency(v_res.resource_id);
+        UPDATE RESOURCES SET efficiency_score = v_score WHERE resource_id = v_res.resource_id;
+    END LOOP;
+    CLOSE c_resources;
+END;
+$$;
+```
+
+### C. Main Program 2 (File: `main_maintenance_routine.sql`)
+**Description:** An anonymous block that triggers the system-wide update procedure and reports completion with a system notice.
+
+```sql
+DO $$
+BEGIN
+    CALL update_efficiencies();
+    RAISE NOTICE 'Resource efficiencies recalculated successfully.';
+END;
+$$;
+```
+
+### D. Execution Proof & Database Update
+Console output of the second main program execution:
+![Main 2 Execution](images/Main2Run.png)
+
+The `efficiency_score` column in the `RESOURCES` table was successfully calculated and populated:
+![Updated Efficiency Scores](images/Main2Rows.png)
+
+---
+
+## 4. Automated Resource Downtime Trigger (Trigger 1)
+**File:** `trig_resource_offline.sql`  
+**Trigger Type:** `AFTER UPDATE`  
+**Description:** This trigger listens to the `RESOURCES` table. As soon as a server's status changes from `TRUE` to `FALSE` (indicating a crash or downtime), the trigger fires automatically. It calculates a new event key, fetches a valid process ID to avoid violating NOT NULL constraints, and injects a critical 'Hardware Alert' into the system event log.
+
+```sql
+CREATE OR REPLACE FUNCTION log_resource_downtime()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_next_event_id INT;
+    v_fallback_pid INT;
+BEGIN
+    IF OLD.is_operational = TRUE AND NEW.is_operational = FALSE THEN
+        SELECT COALESCE(MAX(event_id), 0) + 1 INTO v_next_event_id FROM SYSTEM_EVENTS;
+        SELECT pid INTO v_fallback_pid FROM PROCESSES LIMIT 1;
+
+        INSERT INTO SYSTEM_EVENTS (event_id, event_type, severity, description, pid)
+        VALUES (v_next_event_id, 'Hardware Alert', 'Critical', 'Resource ' || NEW.resource_name || ' unexpectedly went offline.', v_fallback_pid);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_resource_offline
+AFTER UPDATE OF is_operational ON RESOURCES
+FOR EACH ROW
+EXECUTE FUNCTION log_resource_downtime();
+```
+
+### Trigger Execution Proof:
+Executing an UPDATE command simulating a server crash:
+![Server Crash Simulation](images/Trigger1Trigger.png)
+
+The trigger automatically generated a critical log entry in the `SYSTEM_EVENTS` table:
+![Automated Event Log](images/Trigger1Result.png)
+
+---
+
+## 5. Budget & Maintenance Control Trigger (Trigger 2)
+**File:** `trig_check_repair_cost.sql`  
+**Trigger Type:** `BEFORE INSERT OR UPDATE`  
+**Description:** A security trigger that prevents budget overruns in maintenance records. If a technician attempts to enter a repair cost exceeding $10,000, the trigger intercepts the action, rolls back the query, and throws a custom Exception to protect the database.
+
+```sql
+CREATE OR REPLACE FUNCTION verify_maintenance_cost()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.repair_cost > 10000 THEN
+        RAISE EXCEPTION 'Repair cost % exceeds maximum allowed budget ($10,000).', NEW.repair_cost;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_check_repair_cost
+BEFORE INSERT OR UPDATE ON MAINTENANCE_LOG
+FOR EACH ROW
+EXECUTE FUNCTION verify_maintenance_cost();
+```
+
+### Trigger Execution Proof:
+Attempting to insert a $15,000 repair log resulted in the custom exception explicitly blocking the transaction:
+![Budget Exception Block](images/Trigger2.png)
